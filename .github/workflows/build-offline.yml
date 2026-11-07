@@ -1,0 +1,149 @@
+name: Build Python 3.13 Windows Offline Wheels
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Set up Python 3.13 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Create requirements and installer
+        shell: pwsh
+        run: |
+          @'
+          numpy==2.4.2
+          scipy==1.18.1
+          pandas
+          matplotlib
+          seaborn
+          plotly
+          scikit-learn
+          statsmodels
+          networkx
+          biopython
+          numba
+          polars
+          h5py
+          pillow
+          sympy
+          pyarrow
+          dlt
+          SQLAlchemy
+          openpyxl
+          fsspec
+          boto3
+          XlsxWriter
+          xlrd
+          ipywidgets
+          ipyfilechooser
+          bokeh
+          altair
+          panel
+          voila
+          streamlit
+          ipyleaflet
+          bqplot
+          jupyterlab
+          ipython
+          ipykernel
+          tqdm
+          joblib
+          pytest
+          requests
+          httpx
+          beautifulsoup4
+          lxml
+          PyYAML
+          rich
+          click
+          python-dotenv
+          pydantic
+          black
+          flake8
+          pylint
+          mypy
+          ruff
+          pytest-cov
+          line-profiler
+          memory-profiler
+          sphinx
+          poetry
+          pipenv
+          icecream
+          coverage
+          isort
+          setuptools
+          wheel
+          virtualenv
+          pip-tools
+          nltk
+          gensim
+          pygame
+          colorama
+          pyinstaller
+          cx-Freeze
+          PySimpleGUI
+          dask
+          cython
+          watchdog
+          '@ | Set-Content -Encoding utf8 requirements-core.txt
+          @'
+          @echo off
+          cd /d "%~dp0"
+          py -3.13 -m pip install --no-index --find-links="%~dp0wheels" -r "%~dp0requirements-core.txt"
+          if errorlevel 1 echo Installation failed. Verify Python 3.13 and missing dependencies.
+          pause
+          '@ | Set-Content -Encoding ascii install_offline.bat
+      - name: Download Windows wheels with dependencies
+        id: download
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python -m pip download --only-binary=:all: --dest wheels -r requirements-core.txt *>&1 | Tee-Object -FilePath download-log.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify complete offline resolution
+        id: verify
+        if: steps.download.outcome == 'success'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python -m pip install --dry-run --ignore-installed --no-index --find-links wheels -r requirements-core.txt *>&1 | Tee-Object -FilePath verification-log.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package verified downloads
+        if: steps.download.outcome == 'success' && steps.verify.outcome == 'success'
+        shell: pwsh
+        run: |
+          @'
+          import pathlib,zipfile
+          root=pathlib.Path('.')
+          with zipfile.ZipFile('offline-wheels-win_amd64-py313.zip','w',compression=zipfile.ZIP_STORED,allowZip64=True) as z:
+              for p in sorted(pathlib.Path('wheels').glob('*.whl')): z.write(p,p.as_posix())
+              for n in ['requirements-core.txt','install_offline.bat','download-log.txt','verification-log.txt']: z.write(n)
+          '@ | python
+      - name: Upload offline ZIP
+        if: steps.download.outcome == 'success' && steps.verify.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python313-windows-offline-zip
+          path: offline-wheels-win_amd64-py313.zip
+          compression-level: 0
+          retention-days: 7
+      - name: Upload diagnostics if failed
+        if: steps.download.outcome != 'success' || steps.verify.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python313-download-error-logs
+          path: |
+            requirements-core.txt
+            download-log.txt
+            verification-log.txt
+          if-no-files-found: warn
+      - name: Mark incomplete build as failed
+        if: steps.download.outcome != 'success' || steps.verify.outcome != 'success'
+        shell: pwsh
+        run: exit 1
